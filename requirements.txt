@@ -1,0 +1,9 @@
+typer
+rich
+pyte
+python-dotenv
+google-genai
+reportlab
+markdown
+PyQt5
+pytest
