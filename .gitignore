@@ -1,24 +1,33 @@
 # ==============================================================================
 # Shellby .gitignore
+# Cross-Platform: Linux (POSIX) & Windows (cmd.exe / PowerShell / ConPTY)
 # ==============================================================================
 
-# Virtual Environments
+# ------------------------------------------------------------------------------
+# Python & Virtual Environments
+# ------------------------------------------------------------------------------
 .venv/
 venv/
 ENV/
 env/
 env.bak/
 venv.bak/
+**/.venv/
+**/venv/
+**/env/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 *.so
 
-# Distribution / packaging
+# Distribution / packaging / builds
 build/
+**/build/
 dist/
+**/dist/
 downloads/
 eggs/
 .eggs/
@@ -34,52 +43,103 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# Environment variables & secrets (Gemini API keys, credentials)
-.env
-.env.*
-!.env.example
-*.pem
-*.key
+# ------------------------------------------------------------------------------
+# Windows & PyInstaller Build Artifacts
+# ------------------------------------------------------------------------------
+# Compiled binaries, DLLs, and debug files
+*.exe
+*.dll
+*.pyd
+*.pdb
+*.lib
+*.exp
+*.obj
+*.manifest
 
-# Unit test & coverage artifacts
-.pytest_cache/
-.coverage
-.coverage.*
-nosetests.xml
-coverage.xml
-htmlcov/
-.tox/
-.nox/
-.hypothesis/
-.mypy_cache/
-.ruff_cache/
+# PyInstaller build cache & temporary data (Shellby.spec is tracked)
+.pyinstaller/
+*.spec.bak
 
-# Shellby runtime & local library metadata
-.shellby-library.json
-**/.shellby-library.json
-sessions/
-*.raw.log
-*.tmp
-
-# Operating System & Filesystem Artifacts
+# Windows OS / Filesystem Artifacts
+desktop.ini
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+*.lnk
+$RECYCLE.BIN/
 *:Zone.Identifier
+
+# ------------------------------------------------------------------------------
+# macOS & Linux Operating System Artifacts
+# ------------------------------------------------------------------------------
 .DS_Store
 .DS_Store?
 ._*
 .Spotlight-V100
 .Trashes
-ehthumbs.db
-Thumbs.db
+*~
+.fuse_hidden*
+.directory
 
-# IDE & Editor configurations
+# ------------------------------------------------------------------------------
+# Environment Variables & Secrets (Gemini API keys, credentials)
+# ------------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+
+# ------------------------------------------------------------------------------
+# Unit Test & Coverage Artifacts
+# ------------------------------------------------------------------------------
+.pytest_cache/
+**/.pytest_cache/
+.coverage
+.coverage.*
+nosetests.xml
+coverage.xml
+htmlcov/
+**/htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.mypy_cache/
+**/.mypy_cache/
+.ruff_cache/
+**/.ruff_cache/
+
+# ------------------------------------------------------------------------------
+# Shellby Runtime & Session Data
+# ------------------------------------------------------------------------------
+# Sessions generated during interactive recordings
+sessions/
+**/sessions/
+.shellby-library.json
+**/.shellby-library.json
+*.raw.log
+**/*.raw.log
+*.tmp
+**/*.tmp
+
+# ------------------------------------------------------------------------------
+# IDE & Editor Configurations
+# ------------------------------------------------------------------------------
 .idea/
 .vscode/
 *.swp
 *.swo
-*~
 *.bak
+.vs/
+*.sublime-project
+*.sublime-workspace
 
-# Logs & scratch files
+# ------------------------------------------------------------------------------
+# Development Scratch Files & Local Tests
+# ------------------------------------------------------------------------------
 *.log
 drawbacks.txt
 ss.txt
@@ -87,3 +147,8 @@ text.txt
 ttt.txt
 qt_test.py
 test_render.py
+scratch/
+**/scratch/
+tmp/
+**/tmp/
+

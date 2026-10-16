@@ -25,6 +25,30 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# Ensure project root and package parent are on sys.path for robust imports
+# In frozen (PyInstaller) mode, resolve to the executable's real parent directory on disk (never temp _MEIPASS)
+if getattr(sys, "frozen", False):
+    _pkg_root = Path(sys.executable).resolve().parent
+else:
+    _pkg_root = Path(__file__).resolve().parent
+
+if str(_pkg_root) not in sys.path:
+    sys.path.insert(0, str(_pkg_root))
+_parent_root = _pkg_root.parent
+if str(_parent_root) not in sys.path:
+    sys.path.insert(0, str(_parent_root))
+
+# Explicit module imports ensuring PyInstaller static analysis bundles all pipeline dependencies
+try:
+    import shellby_heuristics
+    import shellby_markdown
+    import shellby_curator
+    import shellby_pdf
+    import pyte
+    import reportlab
+except ImportError:
+    pass
+
 from PyQt5.QtCore import (
     Qt, QTimer, QSettings, QUrl, QFileSystemWatcher, QSize, pyqtSignal, QRect, QPoint, QThread,
     QPointF, QRectF, QByteArray
@@ -54,7 +78,7 @@ except ImportError:
     HAS_MARKDOWN = False
 
 APP_ORG = "Shellby"
-APP_NAME = "ShellbyQt"
+APP_NAME = "ShellbyWin"
 LIBRARY_FILE = ".shellby-library.json"
 
 SUFFIXES = [
@@ -72,7 +96,8 @@ SUFFIXES = [
 
 def norm_rel_path(path_str: str) -> str:
     """Normalize relative path to use consistent forward slashes (Issue 6.7)."""
-    return Path(path_str).as_posix()
+    return str(path_str).replace("\\", "/")
+
 
 
 def base_stem(stem: str) -> str:
@@ -360,12 +385,16 @@ def fmt_duration(seconds: float | int | None) -> str | None:
 
 def fmt_date(iso_str: str | None) -> str | None:
     """Accurately format dates without corrupting minute components (Issue 6.6)."""
-    ts = parse_iso(iso_str)
-    if ts is None:
+    if not iso_str:
         return None
-    dt = datetime.fromtimestamp(ts / 1000)
-    hour_12 = dt.hour % 12 or 12
-    return f"{dt.strftime('%b')} {dt.day}, {hour_12}:{dt.minute:02d} {dt.strftime('%p')}"
+    try:
+        s = iso_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        hour_12 = dt.hour % 12 or 12
+        return f"{dt.strftime('%b')} {dt.day}, {hour_12}:{dt.minute:02d} {dt.strftime('%p')}"
+    except Exception:
+        return None
+
 
 
 def display_title(session: dict) -> str:
@@ -573,7 +602,7 @@ def inline_md(text: str) -> str:
     return t
 
 
-def format_code_block_table(code_str: str, lang: str = "", is_transcript: bool = False) -> str:
+def format_code_block_table(code_str: str, lang: str = "", is_transcript: bool = False, session_shell: str = "") -> str:
     """Render a code block as a sleek, contiguous terminal card for Qt rich text."""
     lines = code_str.replace("\r\n", "\n").split("\n")
     while lines and not lines[0].strip():
@@ -585,36 +614,83 @@ def format_code_block_table(code_str: str, lang: str = "", is_transcript: bool =
         return ""
 
     lang_clean = (lang or "").strip().lower()
-    if is_transcript or lang_clean in ("console", "terminal", "shell", "sh", "bash"):
-        header_title = "Terminal"
-        if lang_clean and lang_clean not in ("console", "terminal"):
-            header_title = f"Terminal ({lang_clean})"
+    shell_clean = (session_shell or "").strip().lower()
+
+    # Detect if shell or language is PowerShell or prompt contains PS
+    is_powershell = (
+        "powershell" in shell_clean
+        or "pwsh" in shell_clean
+        or lang_clean in ("powershell", "ps1")
+        or any(line.strip().startswith("PS ") or re.match(r"^(?:PS\s+)?(?:\([a-zA-Z0-9_.\- ]+\)\s*)?PS\s+[a-zA-Z]:\\", line.strip()) for line in lines)
+    )
+
+    is_shell = is_transcript or is_powershell or lang_clean in (
+        "console", "terminal", "shell", "sh", "bash",
+        "cmd", "bat", "batch", "powershell", "ps1", "dos", "win", "windows"
+    )
+
+    if is_powershell:
+        header_title = "PowerShell"
+    elif lang_clean in ("cmd", "bat", "batch", "dos"):
+        header_title = "Command Prompt (cmd.exe)"
+    elif is_shell:
+        header_title = "PowerShell" if is_powershell else ("Command Prompt" if sys.platform == "win32" else "Terminal")
+        if lang_clean and lang_clean not in ("console", "terminal", "shell", "sh", "bash", "win", "windows", "cmd", "powershell", "ps1"):
+            header_title = f"{header_title} ({lang_clean})"
     elif lang_clean:
         header_title = lang_clean
     else:
-        header_title = "Terminal"
+        header_title = "PowerShell" if is_powershell else ("Command Prompt" if sys.platform == "win32" else "Terminal")
 
     formatted_lines = []
+    # Windows & Unix prompt pattern:
+    # Matches:
+    #   C:\Users\foo> dir
+    #   (.venv) C:\Users\foo> python app.py
+    #   PS C:\Users\foo> Get-Process
+    #   \\server\share\dir> dir
+    #   (/path) $ cmd
+    #   $ cmd
+    #   # cmd
+    win_or_posix_prompt_re = re.compile(
+        r"^(?P<prompt>(?:PS\s+)?(?:\([a-zA-Z0-9_.\- ]+\)\s*)?(?:[a-zA-Z]:\\[^>]*|\\\\[^>]+)>|(?:\(.*?\)\s*[$#]|\$|#))\s*(?P<cmd>.*)$"
+    )
+
     for line in lines:
         escaped = htmlmod.escape(line)
-        if is_transcript or lang_clean in ("console", "terminal", "shell", "bash"):
-            # Format prompt: e.g. (/path) $ cmd or $ cmd or # cmd
-            prompt_match = re.match(r"^(\(.*?\)\s*[$#]|\$|#)\s*(.*)$", line)
+        if is_shell:
+            prompt_match = win_or_posix_prompt_re.match(line)
             if prompt_match:
-                p_text = htmlmod.escape(prompt_match.group(1))
-                c_text = htmlmod.escape(prompt_match.group(2))
+                p_text = htmlmod.escape(prompt_match.group("prompt"))
+                c_text = htmlmod.escape(prompt_match.group("cmd"))
                 formatted_lines.append(
                     f'<span style="color: #818cf8; font-weight: bold;">{p_text}</span> '
                     f'<span style="color: #ffffff; font-weight: bold;">{c_text}</span>'
                 )
-            elif line.startswith("[sudo]") or "[interactive session" in line:
+            elif (
+                line.startswith("[sudo]")
+                or "[interactive session" in line
+                or "Terminate batch job" in line
+                or line.strip().endswith("(Y/N)?")
+                or line.strip().endswith("(y/n)?")
+            ):
                 formatted_lines.append(f'<span style="color: #fbbf24; font-style: italic;">{escaped}</span>')
-            elif "exited with code" in line or line.startswith("Error:") or line.startswith("fatal:"):
+            elif (
+                "exited with code" in line
+                or line.startswith("Error:")
+                or line.startswith("fatal:")
+                or "is not recognized as an internal or external command" in line
+                or "The system cannot find the" in line
+                or "Access is denied" in line
+                or line.startswith("Traceback (most recent call last):")
+            ):
                 formatted_lines.append(f'<span style="color: #f87171; font-weight: bold;">{escaped}</span>')
+            elif line.strip().startswith("::") or line.strip().upper().startswith("REM ") or line.strip().startswith("#"):
+                formatted_lines.append(f'<span style="color: #64748b; font-style: italic;">{escaped}</span>')
             else:
                 formatted_lines.append(f'<span style="color: #cbd5e1;">{escaped}</span>')
         else:
-            if line.strip().startswith("#"):
+            if line.strip().startswith("#") or line.strip().startswith("::") or line.strip().upper().startswith("REM "):
                 formatted_lines.append(f'<span style="color: #64748b; font-style: italic;">{escaped}</span>')
             else:
                 formatted_lines.append(f'<span style="color: #f8fafc;">{escaped}</span>')
@@ -626,14 +702,14 @@ def format_code_block_table(code_str: str, lang: str = "", is_transcript: bool =
         f'<tr><td style="background-color: #1e293b; color: #94a3b8; font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; font-size: 11px; font-weight: 600; padding: 5px 12px; border-bottom: 1px solid #334155;">'
         f'<span style="color: #ef4444; font-size: 11px;">●</span>&nbsp;<span style="color: #f59e0b; font-size: 11px;">●</span>&nbsp;<span style="color: #10b981; font-size: 11px;">●</span>&nbsp;&nbsp;&nbsp;{escape_html(header_title)}'
         f'</td></tr>'
-        f'<tr><td style="padding: 10px 14px; background-color: #0f172a; font-family: \'JetBrains Mono\', \'Cascadia Code\', Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; color: #f8fafc;">'
+        f'<tr><td style="padding: 10px 14px; background-color: #0f172a; font-family: \'JetBrains Mono\', \'Cascadia Code\', Consolas, Menlo, monospace; font-size: 12px; line-height: 1.5; color: #f8fafc;">'
         f'{code_body}'
         f'</td></tr>'
         f'</table>'
     )
 
 
-def render_simple_markdown(md: str, is_transcript: bool = False) -> str:
+def render_simple_markdown(md: str, is_transcript: bool = False, session_shell: str = "") -> str:
     lines = md.replace("\r\n", "\n").split("\n")
     out = []
     in_code = False
@@ -656,7 +732,7 @@ def render_simple_markdown(md: str, is_transcript: bool = False) -> str:
                 code_buf = []
             else:
                 in_code = False
-                out.append(format_code_block_table("\n".join(code_buf), lang=code_lang, is_transcript=is_transcript))
+                out.append(format_code_block_table("\n".join(code_buf), lang=code_lang, is_transcript=is_transcript, session_shell=session_shell))
             continue
 
         if in_code:
@@ -706,20 +782,26 @@ def render_simple_markdown(md: str, is_transcript: bool = False) -> str:
 
     close_list()
     if in_code and code_buf:
-        out.append(format_code_block_table("\n".join(code_buf), lang=code_lang, is_transcript=is_transcript))
+        out.append(format_code_block_table("\n".join(code_buf), lang=code_lang, is_transcript=is_transcript, session_shell=session_shell))
 
     return "\n".join(out)
 
 
 def render_markdown_html(md_text: str, is_transcript: bool = False) -> str:
     """Render Markdown to styled HTML tailored for Qt QTextBrowser with elegant code cards."""
+    # Extract session shell from metadata if present (e.g. - **Shell:** powershell.exe)
+    session_shell = ""
+    shell_m = re.search(r"-\s*\*\*Shell:\*\*\s*([^\r\n]+)", md_text, re.IGNORECASE)
+    if shell_m:
+        session_shell = shell_m.group(1).strip()
+
     # 1. Extract fenced code blocks
     code_blocks = []
     def code_replacer(m):
         lang = m.group(1).strip()
         code = m.group(2)
         idx = len(code_blocks)
-        table_html = format_code_block_table(code, lang=lang, is_transcript=is_transcript)
+        table_html = format_code_block_table(code, lang=lang, is_transcript=is_transcript, session_shell=session_shell)
         code_blocks.append(table_html)
         return f"\n\n<!--__SHELLBY_CODE_BLOCK_{idx}__-->\n\n"
 
@@ -800,9 +882,9 @@ def render_markdown_html(md_text: str, is_transcript: bool = False) -> str:
         try:
             body = markdown.markdown(processed_md, extensions=["extra", "sane_lists"])
         except Exception:
-            body = render_simple_markdown(processed_md, is_transcript=is_transcript)
+            body = render_simple_markdown(processed_md, is_transcript=is_transcript, session_shell=session_shell)
     else:
-        body = render_simple_markdown(processed_md, is_transcript=is_transcript)
+        body = render_simple_markdown(processed_md, is_transcript=is_transcript, session_shell=session_shell)
 
     # 5. Style inline code elements
     body = re.sub(
@@ -918,8 +1000,16 @@ class HeuristicsWorker(QThread):
 
     def run(self):
         try:
-            from shellby_heuristics import session_blocks_payload
-            from shellby_markdown import render_markdown
+            try:
+                from shellby_heuristics import session_blocks_payload
+                from shellby_markdown import render_markdown
+            except ImportError:
+                try:
+                    from .shellby_heuristics import session_blocks_payload
+                    from .shellby_markdown import render_markdown
+                except ImportError:
+                    from winShell.shellby_heuristics import session_blocks_payload
+                    from winShell.shellby_markdown import render_markdown
 
             stem = self.session_path.stem
             blocks_path = self.session_path.with_name(f"{stem}.blocks.json")
@@ -949,8 +1039,16 @@ class CurationWorker(QThread):
 
     def run(self):
         try:
-            from shellby_curator import curate_file
-            from shellby_pdf import render_markdown_to_pdf
+            try:
+                from shellby_curator import curate_file
+                from shellby_pdf import render_markdown_to_pdf
+            except ImportError:
+                try:
+                    from .shellby_curator import curate_file
+                    from .shellby_pdf import render_markdown_to_pdf
+                except ImportError:
+                    from winShell.shellby_curator import curate_file
+                    from winShell.shellby_pdf import render_markdown_to_pdf
 
             curated = curate_file(
                 input_path=self.blocks_path,
@@ -982,7 +1080,14 @@ class PdfExportWorker(QThread):
 
     def run(self):
         try:
-            from shellby_pdf import render_pdf_file
+            try:
+                from shellby_pdf import render_pdf_file
+            except ImportError:
+                try:
+                    from .shellby_pdf import render_pdf_file
+                except ImportError:
+                    from winShell.shellby_pdf import render_pdf_file
+
             render_pdf_file(self.md_path, self.pdf_path)
             self.finished.emit(True, f"PDF rendered successfully:\n{self.pdf_path.name}")
         except Exception as exc:
@@ -1002,10 +1107,22 @@ class FullPipelineWorker(QThread):
 
     def run(self):
         try:
-            from shellby_heuristics import session_blocks_payload
-            from shellby_markdown import render_markdown
-            from shellby_curator import curate_file
-            from shellby_pdf import render_markdown_to_pdf
+            try:
+                from shellby_heuristics import session_blocks_payload
+                from shellby_markdown import render_markdown
+                from shellby_curator import curate_file
+                from shellby_pdf import render_markdown_to_pdf
+            except ImportError:
+                try:
+                    from .shellby_heuristics import session_blocks_payload
+                    from .shellby_markdown import render_markdown
+                    from .shellby_curator import curate_file
+                    from .shellby_pdf import render_markdown_to_pdf
+                except ImportError:
+                    from winShell.shellby_heuristics import session_blocks_payload
+                    from winShell.shellby_markdown import render_markdown
+                    from winShell.shellby_curator import curate_file
+                    from winShell.shellby_pdf import render_markdown_to_pdf
 
             self.progress.emit("Phase 1/3: Parsing terminal output and grouping blocks...")
             stem = self.session_path.stem
@@ -1248,7 +1365,7 @@ class SessionCard(QFrame):
 class ShellbyWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Shellby - Session Manager & Guide Curator")
+        self.setWindowTitle("Shellby - Windows Command Prompt Edition")
         icon_path = Path(__file__).resolve().parent / "logo" / "logo.ico"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
@@ -1287,18 +1404,25 @@ class ShellbyWindow(QMainWindow):
         self._rescan_debounce.setSingleShot(True)
         self._rescan_debounce.timeout.connect(lambda: self.open_folder(self.folder, keep_selection=True))
 
-        # Synchronize remembered API key with environment if available
+        # Synchronize remembered API key and model with environment if available
         saved_api_key = self.settings.value("shellby/api_key", "")
         if saved_api_key and str(saved_api_key).strip():
             os.environ["GEMINI_API_KEY"] = str(saved_api_key).strip()
+        saved_model = self.settings.value("shellby/model", "")
+        if saved_model and str(saved_model).strip():
+            os.environ["GEMINI_MODEL"] = str(saved_model).strip()
 
         self._build_ui()
         self._apply_theme()
         self._setup_shortcuts()
 
         last_folder = self.settings.value("shellby/folder", "")
-        if last_folder and os.path.isdir(last_folder):
-            self.open_folder(last_folder)
+        if last_folder and os.path.isdir(str(last_folder)):
+            self.open_folder(str(last_folder))
+        else:
+            default_sessions = _pkg_root / "sessions"
+            if default_sessions.is_dir():
+                self.open_folder(str(default_sessions))
 
     def _setup_shortcuts(self):
         QShortcut(QKeySequence("Ctrl+O"), self, self.choose_folder)
@@ -1397,10 +1521,10 @@ class ShellbyWindow(QMainWindow):
         self.api_key_lbl = QLabel()
         self._update_api_key_status_label()
 
-        self.api_key_btn = QPushButton(" API Key…")
+        self.api_key_btn = QPushButton(" AI Settings…")
         self.api_key_btn.setIcon(create_vector_icon("key", "#475569", 14))
         self.api_key_btn.setIconSize(QSize(14, 14))
-        self.api_key_btn.setToolTip("Configure and remember Gemini API Key (Ctrl+K)")
+        self.api_key_btn.setToolTip("Configure and remember Gemini API Key and Model (Ctrl+K)")
         self.api_key_btn.clicked.connect(self.configure_api_key)
 
         api_layout.addWidget(self.api_key_lbl, 1)
@@ -1907,7 +2031,7 @@ class ShellbyWindow(QMainWindow):
             return
         self._rescan_debounce.start(400)
 
-    # ---------------- API Key handling ----------------
+    # ---------------- API Key & Model handling ----------------
 
     def get_api_key(self) -> str | None:
         """Retrieve remembered Gemini API key from QSettings or GEMINI_API_KEY env."""
@@ -1929,37 +2053,85 @@ class ShellbyWindow(QMainWindow):
                 del os.environ["GEMINI_API_KEY"]
         self._update_api_key_status_label()
 
+    def get_model(self) -> str:
+        """Retrieve remembered Gemini model from QSettings or GEMINI_MODEL env or default."""
+        saved = self.settings.value("shellby/model", "")
+        if saved and str(saved).strip():
+            return str(saved).strip()
+        env_val = os.environ.get("GEMINI_MODEL", "").strip()
+        return env_val or "gemini-2.5-flash"
+
+    def set_model(self, model: str | None) -> None:
+        """Persist Gemini model in QSettings and update current process environment."""
+        clean_model = (model or "").strip()
+        if clean_model:
+            self.settings.setValue("shellby/model", clean_model)
+            os.environ["GEMINI_MODEL"] = clean_model
+        else:
+            self.settings.remove("shellby/model")
+            if "GEMINI_MODEL" in os.environ:
+                del os.environ["GEMINI_MODEL"]
+        self._update_api_key_status_label()
+
     def _update_api_key_status_label(self):
         if not hasattr(self, "api_key_lbl"):
             return
         key = self.get_api_key()
+        model = self.get_model()
         if key:
             masked = "••••••••" + key[-4:] if len(key) > 4 else "••••"
-            self.api_key_lbl.setText(f"API Key: {masked}")
+            self.api_key_lbl.setText(f"AI: {masked} | {model}")
             self.api_key_lbl.setStyleSheet("color: #059669; font-size: 11px; font-weight: 500;")
-            self.api_key_lbl.setToolTip(f"Gemini API key is configured and remembered ({masked})")
+            self.api_key_lbl.setToolTip(f"Gemini API key is configured ({masked})\nActive Model: {model}\nClick to configure (Ctrl+K)")
         else:
-            self.api_key_lbl.setText("API Key: Not configured")
+            self.api_key_lbl.setText(f"AI: Key missing ({model})")
             self.api_key_lbl.setStyleSheet("color: #dc2626; font-size: 11px; font-weight: 500;")
-            self.api_key_lbl.setToolTip("Click to configure Gemini API Key for AI guide curation")
+            self.api_key_lbl.setToolTip(f"Click to configure Gemini API Key and Model (current model: {model})")
 
     def configure_api_key(self):
-        """Display dialog allowing user to view, edit, save, or clear their Gemini API key."""
+        """Display dialog allowing user to configure, change, or remember their Gemini API key and model."""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Gemini API Key Settings")
-        dialog.resize(460, 220)
+        dialog.setWindowTitle("Gemini AI & Model Settings")
+        dialog.resize(480, 290)
         v = QVBoxLayout(dialog)
         v.setSpacing(12)
         v.setContentsMargins(18, 18, 18, 18)
 
         desc = QLabel(
-            "Configure your Gemini API Key. Just like the folder location, it is saved "
-            "in local settings and remembered across sessions for AI guide curation and full pipeline runs."
+            "Configure your Gemini API Key and Model. These settings are saved locally and "
+            "remembered across sessions. If a model is ever discontinued, type the new model name in the text box."
         )
         desc.setWordWrap(True)
         desc.setStyleSheet("color: #475569; font-size: 12px; line-height: 1.4;")
         v.addWidget(desc)
 
+        # Model input field (Editable QComboBox for arbitrary typing + presets)
+        model_layout = QVBoxLayout()
+        model_lbl = QLabel("Gemini Model:")
+        model_lbl.setStyleSheet("font-weight: 600; font-size: 12px; color: #0f172a;")
+        model_layout.addWidget(model_lbl)
+
+        model_combo = QComboBox()
+        model_combo.setEditable(True)
+        model_combo.addItems([
+            "gemini-2.5-flash",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+            "gemini-2.0-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-2.5-pro",
+        ])
+        current_model = self.get_model()
+        idx = model_combo.findText(current_model)
+        if idx >= 0:
+            model_combo.setCurrentIndex(idx)
+        else:
+            model_combo.setEditText(current_model)
+        model_combo.setToolTip("Type or select any Gemini model name. Custom and future model names are supported.")
+        model_layout.addWidget(model_combo)
+        v.addLayout(model_layout)
+
+        # API Key input field
         key_layout = QVBoxLayout()
         key_lbl = QLabel("Gemini API Key:")
         key_lbl.setStyleSheet("font-weight: 600; font-size: 12px; color: #0f172a;")
@@ -1997,18 +2169,17 @@ class ShellbyWindow(QMainWindow):
         cancel_btn.clicked.connect(dialog.reject)
         btns_row.addWidget(cancel_btn)
 
-        save_btn = QPushButton("Save Key")
+        save_btn = QPushButton("Save Settings")
         save_btn.setStyleSheet("background: #4f46e5; color: white; font-weight: 700; border: none; padding: 7px 18px;")
 
         def on_save():
             new_key = key_input.text().strip()
+            new_model = model_combo.currentText().strip() or "gemini-2.5-flash"
             self.set_api_key(new_key if new_key else None)
-            if new_key:
-                self.status_msg.setText("Gemini API key saved.")
-                QMessageBox.information(self, "API Key Saved", "Gemini API key has been successfully saved!")
-            else:
-                self.status_msg.setText("Gemini API key cleared.")
+            self.set_model(new_model)
+            self.status_msg.setText(f"Gemini settings saved (model: {new_model}).")
             dialog.accept()
+            QMessageBox.information(self, "Settings Saved", f"Gemini settings successfully saved!\nActive model: {new_model}")
 
         save_btn.clicked.connect(on_save)
         btns_row.addWidget(save_btn)
@@ -2380,8 +2551,15 @@ class ShellbyWindow(QMainWindow):
             return
         pdf_rel = session["files"].get("guidePdf") or session["files"].get("transcriptPdf")
         if pdf_rel:
-            path = os.path.join(self.folder, pdf_rel)
-            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+            path = os.path.abspath(os.path.join(self.folder, pdf_rel))
+            if os.path.exists(path):
+                if sys.platform == "win32":
+                    try:
+                        os.startfile(path)
+                        return
+                    except Exception:
+                        pass
+                QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _reveal_in_folder(self):
         session = self._current_session()
@@ -2389,7 +2567,14 @@ class ShellbyWindow(QMainWindow):
             return
         any_file = next((f for f in session["files"].values() if f), None)
         if any_file:
-            dir_path = os.path.dirname(os.path.join(self.folder, any_file)) or self.folder
+            full_path = os.path.abspath(os.path.join(self.folder, any_file))
+            if sys.platform == "win32" and os.path.exists(full_path):
+                try:
+                    subprocess.Popen(f'explorer.exe /select,"{full_path}"')
+                    return
+                except Exception:
+                    pass
+            dir_path = os.path.dirname(full_path) or self.folder
             QDesktopServices.openUrl(QUrl.fromLocalFile(dir_path))
 
     def _delete_session(self):
@@ -2437,6 +2622,14 @@ class ShellbyWindow(QMainWindow):
         v.addWidget(QLabel("Session Title (optional):"))
         v.addWidget(title_input)
 
+        shell_combo = QComboBox()
+        shell_combo.addItem("Command Prompt (cmd.exe)", "cmd.exe")
+        shell_combo.addItem("Windows PowerShell (powershell.exe)", "powershell.exe")
+        if shutil.which("pwsh.exe"):
+            shell_combo.addItem("PowerShell 7 (pwsh.exe)", "pwsh.exe")
+        v.addWidget(QLabel("Shell to Record:"))
+        v.addWidget(shell_combo)
+
         guide_check = QCheckBox("Automatically generate Guide & PDF upon exit")
         guide_check.setChecked(True)
         v.addWidget(guide_check)
@@ -2452,34 +2645,30 @@ class ShellbyWindow(QMainWindow):
             return
 
         title = title_input.text().strip() or None
+        chosen_shell = shell_combo.currentData() or "cmd.exe"
         target_dir = self.folder
 
-        project_root = Path(__file__).resolve().parent
-        shellby_script = str(project_root / "shellby.py")
+        if getattr(sys, "frozen", False):
+            # When frozen as an executable, Shellby.exe itself handles the 'record' CLI subcommand
+            cmd = [sys.executable, "record", "--dir", str(target_dir), "--shell", chosen_shell]
+        else:
+            project_root = Path(__file__).resolve().parent
+            shellby_script = str(project_root / "shellby.py")
+            cmd = [sys.executable, shellby_script, "record", "--dir", str(target_dir), "--shell", chosen_shell]
 
-        cmd = [sys.executable, shellby_script, "record", "--dir", target_dir]
         if title:
             cmd.extend(["--title", title])
         if not guide_check.isChecked():
             cmd.append("--no-guide")
 
-        # 1. Check WSL environment
-        is_wsl = os.path.exists("/proc/sys/fs/binfmt_misc/WSLInterop") or "WSL_DISTRO_NAME" in os.environ
-        launched = False
-
-        if is_wsl:
-            distro = os.environ.get("WSL_DISTRO_NAME", "")
-            cmd_joined = " ".join(f'"{c}"' if " " in c else c for c in cmd)
-            shell_cmd = f"cd '{project_root.as_posix()}' && {cmd_joined}"
-
+        # 1. Native Windows terminal execution
+        if sys.platform == "win32":
+            # Prefer Windows Terminal (wt.exe) if available
             if shutil.which("wt.exe"):
                 try:
-                    wt_args = ["wt.exe"]
-                    if distro:
-                        wt_args.extend(["wsl.exe", "-d", distro])
-                    else:
-                        wt_args.append("wsl.exe")
-                    wt_args.extend(["bash", "-c", shell_cmd])
+                    wt_args = ["wt.exe", "--title", "Shellby Recording", "-d", str(target_dir)]
+                    wt_args.extend(["cmd.exe", "/k"])
+                    wt_args.extend(cmd)
                     subprocess.Popen(wt_args)
                     launched = True
                 except Exception:
@@ -2487,13 +2676,44 @@ class ShellbyWindow(QMainWindow):
 
             if not launched and shutil.which("cmd.exe"):
                 try:
-                    wsl_exec = f"wsl.exe -d {distro} bash -c \"{shell_cmd}\"" if distro else f"wsl.exe bash -c \"{shell_cmd}\""
-                    subprocess.Popen(["cmd.exe", "/c", "start", "cmd.exe", "/c", wsl_exec])
+                    subprocess.Popen(
+                        ["cmd.exe", "/c", "start", "Shellby Recording", "cmd.exe", "/k"] + cmd,
+                        cwd=str(target_dir)
+                    )
                     launched = True
                 except Exception:
                     pass
 
-        # 2. Linux desktop terminal emulators
+        # 2. Check WSL environment
+        if not launched:
+            is_wsl = os.path.exists("/proc/sys/fs/binfmt_misc/WSLInterop") or "WSL_DISTRO_NAME" in os.environ
+            if is_wsl:
+                distro = os.environ.get("WSL_DISTRO_NAME", "")
+                cmd_joined = " ".join(f'"{c}"' if " " in c else c for c in cmd)
+                shell_cmd = f"cd '{project_root.as_posix()}' && {cmd_joined}"
+
+                if shutil.which("wt.exe"):
+                    try:
+                        wt_args = ["wt.exe"]
+                        if distro:
+                            wt_args.extend(["wsl.exe", "-d", distro])
+                        else:
+                            wt_args.append("wsl.exe")
+                        wt_args.extend(["bash", "-c", shell_cmd])
+                        subprocess.Popen(wt_args)
+                        launched = True
+                    except Exception:
+                        pass
+
+                if not launched and shutil.which("cmd.exe"):
+                    try:
+                        wsl_exec = f"wsl.exe -d {distro} bash -c \"{shell_cmd}\"" if distro else f"wsl.exe bash -c \"{shell_cmd}\""
+                        subprocess.Popen(["cmd.exe", "/c", "start", "cmd.exe", "/c", wsl_exec])
+                        launched = True
+                    except Exception:
+                        pass
+
+        # 3. Linux desktop terminal emulators
         if not launched:
             terminals = [
                 ["x-terminal-emulator", "-e"],
@@ -2576,15 +2796,22 @@ class ShellbyWindow(QMainWindow):
         v = QVBoxLayout(dialog)
 
         model_combo = QComboBox()
+        model_combo.setEditable(True)
         model_combo.addItems([
-            "gemini-3.5-flash-lite",
+            "gemini-2.5-flash",
             "gemini-1.5-flash",
             "gemini-1.5-pro",
+            "gemini-2.0-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-2.5-pro",
         ])
-        current_env_model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
-        idx = model_combo.findText(current_env_model)
+        current_model = self.get_model()
+        idx = model_combo.findText(current_model)
         if idx >= 0:
             model_combo.setCurrentIndex(idx)
+        else:
+            model_combo.setEditText(current_model)
+        model_combo.setToolTip("Select or type any custom Gemini model name. It will be remembered automatically.")
         v.addWidget(QLabel("Gemini Model:"))
         v.addWidget(model_combo)
 
@@ -2626,7 +2853,8 @@ class ShellbyWindow(QMainWindow):
             return
 
         focus = focus_input.text().strip() or None
-        model = model_combo.currentText().strip()
+        model = model_combo.currentText().strip() or self.get_model()
+        self.set_model(model)
 
         progress = QProgressDialog(f"Sending session blocks to {model}...", "Cancel", 0, 0, self)
         progress.setWindowTitle("AI Curation in Progress")
@@ -2714,7 +2942,7 @@ class ShellbyWindow(QMainWindow):
                 self.status_msg.setText("Full pipeline cancelled: Gemini API key missing.")
                 return
 
-        model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
+        model = self.get_model()
 
         progress = QProgressDialog("Starting automated pipeline...", "Cancel", 0, 0, self)
         progress.setWindowTitle("Running Full Pipeline")
@@ -2902,8 +3130,20 @@ class ShellbySplashScreen(QSplashScreen):
 
 
 def main():
+    if sys.platform == "win32" and getattr(sys, "frozen", False):
+        try:
+            import ctypes
+            hWnd = ctypes.windll.kernel32.GetConsoleWindow()
+            if hWnd:
+                ctypes.windll.user32.ShowWindow(hWnd, 0)
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
     app.setApplicationName("Shellby")
+
+    if sys.platform == "win32":
+        app.setFont(QFont("Segoe UI", 9))
 
     # Set application icon globally
     icon_path = Path(__file__).resolve().parent / "logo" / "logo.ico"
@@ -2942,4 +3182,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Dual-mode dispatcher: CLI subcommands run shellby engine, default launches Qt GUI
+    cli_subcommands = {"record", "guide", "curate", "parse", "pdf", "--help", "-h"}
+    if len(sys.argv) > 1 and sys.argv[1].lower() in cli_subcommands:
+        import shellby
+        shellby.app()
+    else:
+        main()

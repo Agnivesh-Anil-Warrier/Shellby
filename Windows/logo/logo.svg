@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Drop Shadow for the background card and layers -->
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- Background Documents (Stacked behind the main terminal card) -->
+  <g transform="translate(180, 50)" filter="url(#shadow)">
+    <!-- Back Document -->
+    <rect x="60" y="20" width="150" height="200" rx="16" fill="#1b365d" stroke="#2b528c" stroke-width="4"/>
+    
+    <!-- Front Document in Stack -->
+    <rect x="20" y="0" width="150" height="200" rx="16" fill="#1e4079" stroke="#3b82f6" stroke-width="6"/>
+    
+    <!-- Document Bookmark Ribbon -->
+    <path d="M 120 0 L 120 45 L 137.5 30 L 155 45 L 155 0 Z" fill="#2563eb" stroke="#60a5fa" stroke-width="3" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Main Terminal Card Container -->
+  <g filter="url(#shadow)">
+    <!-- Outer Deep Blue Border / Shadow Layer -->
+    <rect x="60" y="130" width="330" height="330" rx="48" fill="#0f203c"/>
+    
+    <!-- White Inner Border Outline -->
+    <rect x="68" y="138" width="314" height="314" rx="42" fill="none" stroke="#ffffff" stroke-width="10"/>
+
+    <!-- Main Blue Body of Terminal -->
+    <rect x="80" y="150" width="290" height="290" rx="34" fill="#1d4ed8"/>
+
+    <!-- Inner Dark Terminal Screen -->
+    <rect x="115" y="185" width="220" height="220" rx="20" fill="#1e293b"/>
+  </g>
+
+  <!-- Terminal Code / Command Prompt Graphics -->
+  <g transform="translate(115, 185)">
+    <!-- Prompt > symbol -->
+    <path d="M 45 75 L 75 105 L 45 135" fill="none" stroke="#38bdf8" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+    
+    <!-- Cursor _ symbol -->
+    <rect x="95" y="118" width="55" height="14" rx="7" fill="#38bdf8"/>
+  </g>
+
+  <!-- Top-Left Rounded Wrap/Loop Arc -->
+  <!-- A stylish swoosh coming from the top-left curving into the terminal -->
+  <path d="M 150 150 C 90 150 80 200 80 250" fill="none" stroke="#60a5fa" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- Bottom-Right Circular Badge / Backup Arrow Overlay -->
+  <g transform="translate(290, 310)" filter="url(#shadow)">
+    <!-- Dark Backing Circle -->
+    <circle cx="60" cy="60" r="54" fill="#0f172a"/>
+    
+    <!-- Outer Blue Circular Arrow Arc -->
+    <circle cx="60" cy="60" r="42" fill="none" stroke="#1d4ed8" stroke-width="14"/>
+    <circle cx="60" cy="60" r="42" fill="none" stroke="#38bdf8" stroke-width="14" stroke-dasharray="190 75" stroke-dashoffset="30"/>
+
+    <!-- Arrowhead pointing down-left onto the circle -->
+    <path d="M 62 10 L 46 26 L 68 34 Z" fill="#ffffff" stroke="#ffffff" stroke-linejoin="round"/>
+
+    <!-- Inner Dot / Hard Drive Indicator -->
+    <circle cx="60" cy="60" r="16" fill="#38bdf8"/>
+    <!-- Small highlight cut on dot -->
+    <circle cx="66" cy="54" r="4" fill="#ffffff"/>
+  </g>
+</svg>
