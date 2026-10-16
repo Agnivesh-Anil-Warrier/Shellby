@@ -27,6 +27,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
@@ -45,7 +47,7 @@ jobs:
           ruff check Linux Windows --select=E9,F63,F7,F82
 
       - name: Run Gitleaks Secret Scanner
-        uses: gitleaks/gitleaks-action@b706c95c8c5c165d7ad829f0bf571ec889ca2ad0 # v2.3.8
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
