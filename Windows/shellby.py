@@ -709,10 +709,15 @@ def record_session(
     vt_enabled, orig_out, orig_in = _enable_windows_vt_mode()
 
     try:
+        no_conpty_env = os.environ.get("SHELLBY_NO_CONPTY", "").lower() in ("1", "true", "yes")
         can_conpty = (
             sys.platform == "win32"
+            and not no_conpty_env
             and ctypes is not None
             and hasattr(ctypes.windll.kernel32, "CreatePseudoConsole")
+            and sys.stdin.isatty()
+            and sys.stdout.isatty()
+            and vt_enabled
         )
 
         if can_conpty:

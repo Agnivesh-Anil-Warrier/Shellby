@@ -384,16 +384,19 @@ def test_windows_qt2_formatting():
     assert "#64748b" in err_html  # comment highlighting
 
 
-def test_windows_qt2_sessions_discovery():
+def test_windows_qt2_sessions_discovery(tmp_path):
     """Verify shellby_qt2 session scanning and auto-discovery."""
     try:
         from Windows.shellby_qt2 import scan_folder, _pkg_root
     except ImportError:
         from shellby_qt2 import scan_folder, _pkg_root
 
-    sessions_dir = _pkg_root / "sessions"
-    assert sessions_dir.is_dir()
-    sessions = scan_folder(str(sessions_dir))
+    test_session_dir = tmp_path / "sessions" / "demo-session"
+    test_session_dir.mkdir(parents=True, exist_ok=True)
+    (test_session_dir / "session.json").write_text("{}", encoding="utf-8")
+    (test_session_dir / "blocks.json").write_text("[]", encoding="utf-8")
+
+    sessions = scan_folder(str(tmp_path / "sessions"))
     assert isinstance(sessions, list)
     assert len(sessions) >= 1
     first = sessions[0]
