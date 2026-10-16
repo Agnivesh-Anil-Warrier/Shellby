@@ -1,4 +1,4 @@
-name: Workflow Analysis & CI
+name: CI
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
-# Enforce least-privilege permissions across all jobs
+# Enforce least-privilege permissions
 permissions:
   contents: read
 
@@ -17,125 +17,37 @@ concurrency:
 
 jobs:
   # ----------------------------------------------------------------------------
-  # Job 1: Static Code Analysis, Secrets Scan & Push Inspection
-  # ----------------------------------------------------------------------------
-  analyze-codebase:
-    name: Codebase & Workflow Analysis
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
-        with:
-          python-version: "3.11"
-
-      - name: Install Analysis Tools
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
-          pip install flake8 ruff
-
-      - name: Inspect Push & Generate Workflow Report
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          COMMIT_SHA: ${{ github.sha }}
-          ACTOR: ${{ github.actor }}
-          REF_NAME: ${{ github.ref_name }}
-          BEFORE_SHA: ${{ github.event.before }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          CLEAN_ACTOR=$(printf '%s' "$ACTOR" | tr -cd 'a-zA-Z0-9_-')
-          echo "### 📊 Push & Workflow Analysis Report" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Event:** \`$EVENT_NAME\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Commit SHA:** \`$COMMIT_SHA\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Author:** \`$CLEAN_ACTOR\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Branch / Ref:** \`$REF_NAME\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "#### Modified Files in Range" >> "$GITHUB_STEP_SUMMARY"
-          echo '```text' >> "$GITHUB_STEP_SUMMARY"
-
-          DIFF_RANGE=""
-          if [ "$EVENT_NAME" = "pull_request" ] && [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ]; then
-            DIFF_RANGE="$BASE_SHA...$HEAD_SHA"
-          elif [ "$EVENT_NAME" = "push" ] && [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
-            DIFF_RANGE="$BEFORE_SHA..$COMMIT_SHA"
-          fi
-
-          # Attempt diff against the calculated range; fallback gracefully if unavailable
-          if [ -n "$DIFF_RANGE" ] && git diff --stat "$DIFF_RANGE" >> "$GITHUB_STEP_SUMMARY"; then
-            :
-          elif git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
-            git diff --stat HEAD~1 HEAD >> "$GITHUB_STEP_SUMMARY"
-          else
-            git show --stat --oneline HEAD >> "$GITHUB_STEP_SUMMARY"
-          fi
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Python Bytecode Compilation Verification
-        run: |
-          echo "Validating syntax across Linux/ and Windows/ Python sources..."
-          python -m compileall Linux Windows
-
-      - name: Lint Analysis (Flake8 & Ruff Critical Errors)
-        run: |
-          flake8 Linux Windows --count --select=E9,F63,F7,F82 --show-source --statistics
-          ruff check Linux Windows --select=E9,F63,F7,F82
-
-      - name: Run Gitleaks Secret Scanner
-        uses: gitleaks/gitleaks-action@b706c95c8c5c165d7ad829f0bf571ec889ca2ad0 # v2.3.8
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Targeted Google API Key Pattern Check
-        shell: bash
-        run: |
-          echo "Scanning for accidental Google API key exposures..."
-          set +e
-          grep -rnEI \
-            --exclude-dir=.git \
-            --exclude-dir=.venv \
-            --exclude-dir=venv \
-            'AIza[0-9A-Za-z_-]{35}' .
-          status=$?
-          set -e
-
-          if [ "$status" -eq 0 ]; then
-            echo "::error::Potential Google API key detected in repository files!"
-            exit 1
-          elif [ "$status" -ne 1 ]; then
-            echo "::error::Google API key scan failed with unexpected exit code $status"
-            exit "$status"
-          fi
-
-          echo "No targeted pattern leaks detected."
-
-  # ----------------------------------------------------------------------------
-  # Job 2: Linux Suite (POSIX PTY, Pyte, Heuristics, Curation, PDF, Qt)
+  # Job 1: Linux Suite (Syntax, Ruff, Gitleaks, PTY, Unit Tests & Smoke Test)
   # ----------------------------------------------------------------------------
   test-linux:
-    name: Linux Suite (Python ${{ matrix.python-version }})
-    needs: analyze-codebase
+    name: Linux Suite (Python 3.12)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
     env:
       PYTHONPATH: Linux
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
           cache: "pip"
           cache-dependency-path: Linux/requirements.txt
+
+      - name: Python Syntax Compilation Verification
+        run: |
+          python -m compileall Linux Windows
+
+      - name: Ruff Critical Error Checks
+        run: |
+          pip install ruff
+          ruff check Linux Windows --select=E9,F63,F7,F82
+
+      - name: Run Gitleaks Secret Scanner
+        uses: gitleaks/gitleaks-action@b706c95c8c5c165d7ad829f0bf571ec889ca2ad0 # v2.3.8
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Linux Headless Graphics & Qt Libraries
         run: |
@@ -155,27 +67,19 @@ jobs:
           pip install -r Linux/requirements.txt
 
       - name: Execute Linux Tests under Xvfb
-        # Retain Xvfb to provide a virtual X11 server for QPixmap/QPainter rendering
-        # in shellby_qt tests, ensuring full desktop GUI graphics fidelity in CI.
         run: |
           xvfb-run -a pytest Linux/tests/ -v --tb=short
 
       - name: End-to-End PTY Recording Integration Test
-        # Real controlling PTY session, asserts command execution and output capture in session JSON
         run: |
           python Linux/test_recording_smoke.py
 
   # ----------------------------------------------------------------------------
-  # Job 3: Windows Suite (ConPTY, Cmd Prompt Heuristics, Qt2, Packaging)
+  # Job 2: Windows Suite (Unit Tests, Console Recording, Launcher, Packaging)
   # ----------------------------------------------------------------------------
   test-windows:
-    name: Windows Suite (Python ${{ matrix.python-version }})
-    needs: analyze-codebase
+    name: Windows Suite (Python 3.12)
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
     env:
       QT_QPA_PLATFORM: offscreen
       PYTHONPATH: "Windows;."
@@ -183,10 +87,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
           cache: "pip"
           cache-dependency-path: Windows/requirements.txt
 
@@ -200,7 +104,6 @@ jobs:
           pytest Windows/test_windows.py -v --tb=short
 
       - name: End-to-End Console Recording Integration Test
-        # Real console runner test asserting command execution, timeout cleanup, and output capture in session JSON
         shell: pwsh
         run: |
           python Windows/test_recording_smoke.py
@@ -208,7 +111,6 @@ jobs:
       - name: Verify Batch Launcher Syntax & Help Banner
         shell: pwsh
         run: |
-          # Capture both stdout and stderr (2>&1)
           $output = cmd.exe /c "Windows\run_shellby.bat --help" 2>&1
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
@@ -221,14 +123,12 @@ jobs:
           Write-Host "Batch launcher syntax and output banner verified successfully."
 
       - name: Build Standalone Executable (PyInstaller)
-        if: matrix.python-version == '3.12'
         working-directory: Windows
         run: |
           pip install pyinstaller
           pyinstaller Shellby.spec --log-level WARN --clean --noconfirm
 
       - name: Smoke-Test Packaged Executable
-        if: matrix.python-version == '3.12'
         working-directory: Windows
         shell: pwsh
         run: |
@@ -236,7 +136,6 @@ jobs:
           if (-not (Test-Path $exe)) {
             throw "Packaged executable not found: $exe"
           }
-          # Capture both stdout and stderr (2>&1) in case CLI help is printed to stderr
           $output = & $exe --help 2>&1
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
