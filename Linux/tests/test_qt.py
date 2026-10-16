@@ -6,6 +6,9 @@ import shutil
 import tempfile
 from pathlib import Path
 
+# Ensure headless execution works across headless CI runners
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 import pytest
 from shellby_qt import (
     fmt_date, fmt_duration, norm_rel_path, base_stem, dir_of,
@@ -240,7 +243,7 @@ def test_create_vector_icons():
 
     app = QApplication.instance()
     if app is None:
-        app = QApplication(sys.argv)
+        app = QApplication(["shellby_test"])
 
     icon_names = [
         "record", "parse", "ai", "pdf", "pipeline", "open_pdf",
@@ -261,7 +264,7 @@ def test_api_key_remembering_logic():
 
     app = QApplication.instance()
     if app is None:
-        app = QApplication(sys.argv)
+        app = QApplication(["shellby_test"])
 
     settings = QSettings(APP_ORG, APP_NAME)
     original_key = settings.value("shellby/api_key", None)
