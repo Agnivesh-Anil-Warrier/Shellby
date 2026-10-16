@@ -27,19 +27,25 @@ from pathlib import Path
 
 from PyQt5.QtCore import (
     Qt, QTimer, QSettings, QUrl, QFileSystemWatcher, QSize, pyqtSignal, QRect, QPoint, QThread,
-    QPointF, QRectF
+    QPointF, QRectF, QByteArray
 )
 from PyQt5.QtGui import (
     QDesktopServices, QFont, QKeySequence, QPixmap, QPainter, QPainterPath,
-    QColor, QPen, QBrush, QPolygon, QPolygonF, QIcon
+    QColor, QPen, QBrush, QPolygon, QPolygonF, QIcon, QLinearGradient
 )
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QComboBox, QTextEdit, QTextBrowser,
     QPlainTextEdit, QTabWidget, QFileDialog, QMessageBox, QScrollArea,
     QFrame, QSplitter, QLayout, QDialog, QDialogButtonBox, QCheckBox,
-    QProgressDialog, QStatusBar, QShortcut
+    QProgressDialog, QStatusBar, QShortcut, QSplashScreen
 )
+
+try:
+    from PyQt5.QtSvg import QSvgRenderer
+    HAS_QT_SVG = True
+except ImportError:
+    HAS_QT_SVG = False
 
 try:
     import markdown
@@ -1243,6 +1249,11 @@ class ShellbyWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Shellby - Session Manager & Guide Curator")
+        icon_path = Path(__file__).resolve().parent / "logo" / "logo.ico"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+        else:
+            self.setWindowIcon(QIcon("./logo/logo.ico"))
         self.resize(1320, 840)
 
         self.settings = QSettings(APP_ORG, APP_NAME)
@@ -2731,11 +2742,202 @@ class ShellbyWindow(QMainWindow):
         self._full_pipeline_worker.start()
 
 
+# ----------------------------------------------------------------------
+# Application Splash Screen
+# ----------------------------------------------------------------------
+
+SPLASH_SVG_RAW = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <g transform="translate(180, 50)" filter="url(#shadow)">
+    <rect x="60" y="20" width="150" height="200" rx="16" fill="#1b365d" stroke="#2b528c" stroke-width="4"/>
+    <rect x="20" y="0" width="150" height="200" rx="16" fill="#1e4079" stroke="#3b82f6" stroke-width="6"/>
+    <path d="M 120 0 L 120 45 L 137.5 30 L 155 45 L 155 0 Z" fill="#2563eb" stroke="#60a5fa" stroke-width="3" stroke-linejoin="round"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="60" y="130" width="330" height="330" rx="48" fill="#0f203c"/>
+    <rect x="68" y="138" width="314" height="314" rx="42" fill="none" stroke="#ffffff" stroke-width="10"/>
+    <rect x="80" y="150" width="290" height="290" rx="34" fill="#1d4ed8"/>
+    <rect x="115" y="185" width="220" height="220" rx="20" fill="#1e293b"/>
+  </g>
+
+  <g transform="translate(115, 185)">
+    <path d="M 45 75 L 75 105 L 45 135" fill="none" stroke="#38bdf8" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="95" y="118" width="55" height="14" rx="7" fill="#38bdf8"/>
+  </g>
+
+  <path d="M 150 150 C 90 150 80 200 80 250" fill="none" stroke="#60a5fa" stroke-width="12" stroke-linecap="round"/>
+
+  <g transform="translate(290, 310)" filter="url(#shadow)">
+    <circle cx="60" cy="60" r="54" fill="#0f172a"/>
+    <circle cx="60" cy="60" r="42" fill="none" stroke="#1d4ed8" stroke-width="14"/>
+    <circle cx="60" cy="60" r="42" fill="none" stroke="#38bdf8" stroke-width="14" stroke-dasharray="190 75" stroke-dashoffset="30"/>
+    <path d="M 62 10 L 46 26 L 68 34 Z" fill="#ffffff" stroke="#ffffff" stroke-linejoin="round"/>
+    <circle cx="60" cy="60" r="16" fill="#38bdf8"/>
+    <circle cx="66" cy="54" r="4" fill="#ffffff"/>
+  </g>
+</svg>"""
+
+
+class ShellbySplashScreen(QSplashScreen):
+    """Modern translucent rounded splash screen featuring the Shellby logo and progress bar."""
+
+    def __init__(self, on_dismiss=None):
+        w, h = 500, 440
+        pix = QPixmap(w, h)
+        pix.fill(Qt.transparent)
+        super().__init__(pix, Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.w, self.h = w, h
+        self.progress = 0.0
+        self.status = "Initializing..."
+        self._on_dismiss = on_dismiss
+
+        # Prepare SVG renderer or fallback image
+        self.renderer = None
+        self.fallback_pix = None
+
+        svg_path = Path(__file__).resolve().parent / "logo" / "splash.svg"
+        if not svg_path.exists():
+            svg_path = Path("./logo/splash.svg")
+
+        if HAS_QT_SVG:
+            if svg_path.exists():
+                self.renderer = QSvgRenderer(str(svg_path))
+            else:
+                self.renderer = QSvgRenderer(QByteArray(SPLASH_SVG_RAW.encode("utf-8")))
+
+        if not self.renderer or not self.renderer.isValid():
+            png_path = Path(__file__).resolve().parent / "logo" / "splash.png"
+            if not png_path.exists():
+                png_path = Path("./logo/splash.png")
+            if png_path.exists():
+                self.fallback_pix = QPixmap(str(png_path))
+
+    def set_progress(self, percent: float, msg: str = ""):
+        self.progress = max(0.0, min(100.0, percent))
+        if msg:
+            self.status = msg
+        self.repaint()
+        QApplication.processEvents()
+
+    def mousePressEvent(self, event):
+        if self._on_dismiss:
+            self._on_dismiss()
+        super().mousePressEvent(event)
+
+    def drawContents(self, painter: QPainter):
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+
+        card_rect = QRectF(10, 10, self.w - 20, self.h - 20)
+        card_path = QPainterPath()
+        card_path.addRoundedRect(card_rect, 24, 24)
+
+        # Background card (Obsidian dark theme matching the app)
+        painter.fillPath(card_path, QBrush(QColor("#0d1117")))
+        painter.setPen(QPen(QColor("#30363d"), 1.5))
+        painter.drawPath(card_path)
+
+        # SVG Logo or Fallback Pixmap
+        logo_rect = QRectF((self.w - 180) / 2, 35, 180, 180)
+        if self.renderer and self.renderer.isValid():
+            self.renderer.render(painter, logo_rect)
+        elif self.fallback_pix and not self.fallback_pix.isNull():
+            painter.drawPixmap(logo_rect.toRect(), self.fallback_pix)
+
+        # Title
+        font_title = painter.font()
+        font_title.setPointSize(22)
+        font_title.setBold(True)
+        painter.setFont(font_title)
+        painter.setPen(QColor("#f0f6fc"))
+        painter.drawText(QRectF(0, 235, self.w, 36), Qt.AlignCenter, "Shellby")
+
+        # Subtitle
+        font_sub = painter.font()
+        font_sub.setPointSize(10)
+        font_sub.setBold(False)
+        painter.setFont(font_sub)
+        painter.setPen(QColor("#8b949e"))
+        painter.drawText(QRectF(0, 272, self.w, 20), Qt.AlignCenter, "Session Manager & Guide Curator")
+
+        # Progress Track
+        track_x = 60
+        track_y = 320
+        track_w = self.w - 120
+        track_h = 6
+        track_rect = QRectF(track_x, track_y, track_w, track_h)
+        track_path = QPainterPath()
+        track_path.addRoundedRect(track_rect, 3, 3)
+        painter.fillPath(track_path, QBrush(QColor("#21262d")))
+
+        # Progress Fill
+        fill_w = track_w * (self.progress / 100.0)
+        if fill_w > 0:
+            fill_rect = QRectF(track_x, track_y, fill_w, track_h)
+            fill_path = QPainterPath()
+            fill_path.addRoundedRect(fill_rect, 3, 3)
+
+            grad = QLinearGradient(track_x, track_y, track_x + track_w, track_y)
+            grad.setColorAt(0.0, QColor("#2563eb"))
+            grad.setColorAt(1.0, QColor("#38bdf8"))
+            painter.fillPath(fill_path, QBrush(grad))
+
+        # Status text & Version
+        font_status = painter.font()
+        font_status.setPointSize(9)
+        font_status.setBold(False)
+        painter.setFont(font_status)
+        painter.setPen(QColor("#58a6ff"))
+        painter.drawText(QRectF(track_x, track_y + 16, track_w, 20), Qt.AlignLeft | Qt.AlignVCenter, self.status)
+
+        painter.setPen(QColor("#6e7681"))
+        painter.drawText(QRectF(track_x, track_y + 16, track_w, 20), Qt.AlignRight | Qt.AlignVCenter, "v1.0")
+
+
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Shellby")
+
+    # Set application icon globally
+    icon_path = Path(__file__).resolve().parent / "logo" / "logo.ico"
+    if not icon_path.exists():
+        icon_path = Path("./logo/logo.ico")
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
+
+    # Launch splash screen
+    splash = ShellbySplashScreen()
+    splash.show()
+    splash.set_progress(15, "Initializing workspace...")
+    app.processEvents()
+
     win = ShellbyWindow()
-    win.show()
+    splash.set_progress(70, "Loading session catalog...")
+    app.processEvents()
+
+    splash.set_progress(100, "Starting Shellby...")
+    app.processEvents()
+
+    launched = False
+
+    def launch():
+        nonlocal launched
+        if not launched:
+            launched = True
+            win.show()
+            splash.finish(win)
+
+    splash._on_dismiss = launch
+
+    # Brief smooth display duration before smoothly transitioning to main window
+    QTimer.singleShot(900, launch)
     sys.exit(app.exec_())
 
 
